@@ -18,7 +18,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Data Preprocessing
-    data_path = os.path.join(os.path.dirname(__file__), 'data.csv')
+    data_path = os.path.join(os.path.dirname(__file__), 'dataset', 'obesity_data.csv')
     obesity_dataset = ObesityDataset(data_path)
 
     X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data()

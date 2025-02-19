@@ -25,6 +25,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_depth', type=int, default=5, help='Max depth of decision trees')
     parser.add_argument('--alpha', type=float, default=0.3, help='Learning rate')
     parser.add_argument('--lambda_', type=float, default=0.2, help='L2 regularization hyperparameter')
+    parser.add_argument('--max_iter', type=int, default=100, help='Maximum number of train iterations')
 
     args = parser.parse_args()
 
@@ -46,12 +47,19 @@ if __name__ == '__main__':
             random_state=RANDOM_STATE
         )
     elif args.model == 'LogisticRegression':
-        model = LogisticRegression(random_state=RANDOM_STATE)
+        model = LogisticRegression(
+            C = args.lambda_,
+            max_iter = args.max_iter,
+            random_state=RANDOM_STATE
+        )
     elif args.model == 'SVM':
-        model = SVC()
+        model = SVC(
+            C = args.lambda_
+        )
     else:
         raise Exception('Model is not defined')
 
+    print(f'\nTraining {args.model}...')
     model.fit(X_train, y_train)     # All sklearn and xgboost models follow fit-predict structure
 
     # Inference

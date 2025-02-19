@@ -31,9 +31,9 @@ if __name__ == '__main__':
 
     # Data Preprocessing
     data_path = os.path.join(os.path.dirname(__file__), args.root_path, args.data_path)
-    obesity_dataset = ObesityDataset(data_path, random_state=RANDOM_STATE)
+    obesity_dataset = ObesityDataset(random_state=RANDOM_STATE)
 
-    X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data()
+    X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data(data_path)
 
     # Model Training
     if args.model == 'XGBoost':

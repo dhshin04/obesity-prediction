@@ -5,13 +5,12 @@ from sklearn.preprocessing import StandardScaler
 
 
 class ObesityDataset():
-    def __init__(self, data_path: str, Scaler=None, random_state=None):
-        self.data_path = data_path
+    def __init__(self, Scaler=None, random_state=None):
         self.scaler = Scaler() if Scaler else StandardScaler()
         self.random_state = random_state
 
-    def preprocess(self) -> Tuple:
-        df = pd.read_csv(self.data_path)
+    def preprocess(self, data_path: str) -> Tuple:
+        df = pd.read_csv(data_path)
 
         # Data Cleaning
         df = df.dropna(axis=0, how='any')
@@ -53,9 +52,9 @@ class ObesityDataset():
 
         return features, target
 
-    def load_data(self) -> Tuple:
+    def load_data(self, data_path: str) -> Tuple:
         # Data Preprocessing
-        X, y = self.preprocess()
+        X, y = self.preprocess(data_path)
 
         # Split Data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=self.random_state)

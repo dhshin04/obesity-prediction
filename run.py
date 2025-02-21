@@ -40,7 +40,6 @@ def train_model(args, model, train_loader, val_loader, test_loader):
         
         train_loss /= len(train_loader)
 
-        # TODO: Add accuracy
         model.eval()
         correct, total = 0, 0
         with torch.no_grad():
@@ -54,7 +53,6 @@ def train_model(args, model, train_loader, val_loader, test_loader):
             
             val_accuracy = 100 * correct / total if total > 0 else 0
                 
-        # TODO: Add accuracy
         correct, total = 0, 0
         with torch.no_grad():
             for x_test, y_test in test_loader:

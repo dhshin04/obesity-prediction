@@ -1,4 +1,4 @@
-''' Obesity Prediction using XGBoost '''
+''' Obesity Prediction '''
 
 from typing import Optional
 import os, argparse, time

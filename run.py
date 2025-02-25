@@ -106,7 +106,7 @@ if __name__ == '__main__':
 
     # Data Preprocessing
     data_path = os.path.join(os.path.dirname(__file__), args.root_path, args.data_path)
-    obesity_dataset = ObesityDataset(random_state=RANDOM_STATE)
+    obesity_dataset = ObesityDataset(args, random_state=RANDOM_STATE)
 
     train_loader, val_loader, test_loader = data_provider(
         args,

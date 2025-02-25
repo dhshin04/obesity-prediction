@@ -51,9 +51,14 @@ def preprocess(data_path: str) -> Tuple:
 
 
 class ObesityDataset():
-    def __init__(self, Scaler=None, random_state=None):
+    def __init__(self, args, Scaler=None, random_state=None):
         self.scaler = Scaler() if Scaler else StandardScaler()
         self.random_state = random_state
+        self.val_test_ratio = 1 - args.train_ratio
+        self.test_ratio = 1 - (args.val_ratio / self.val_test_ratio)
+
+        print(f'val_test={self.val_test_ratio}')
+        print(f'test={self.test_ratio}')
 
     def load_data(self, data_path: str) -> Tuple:
         # Data Preprocessing
@@ -61,8 +66,8 @@ class ObesityDataset():
 
         # Split Data
         # TODO: Change hard-coded test size with args
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=self.random_state)
-        X_val, X_test, y_val, y_test = train_test_split(X_test, y_test, test_size=0.5, random_state=self.random_state)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=self.val_test_ratio, random_state=self.random_state)
+        X_val, X_test, y_val, y_test = train_test_split(X_test, y_test, test_size=self.test_ratio, random_state=self.random_state)
 
         # Normalize Data
         X_train = self.scaler.fit_transform(X_train)

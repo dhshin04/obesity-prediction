@@ -1,3 +1,5 @@
+# TODO: Requires hyperparameter tuning
+
 python run.py \
  --model 'LogisticRegression' \
  --root_path './dataset' \

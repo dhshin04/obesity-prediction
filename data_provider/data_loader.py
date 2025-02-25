@@ -65,7 +65,6 @@ class ObesityDataset():
         X, y = preprocess(data_path)
 
         # Split Data
-        # TODO: Change hard-coded test size with args
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=self.val_test_ratio, random_state=self.random_state)
         X_val, X_test, y_val, y_test = train_test_split(X_test, y_test, test_size=self.test_ratio, random_state=self.random_state)
 

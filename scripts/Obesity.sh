@@ -4,6 +4,7 @@ python run.py \
  --model 'LogisticRegression' \
  --root_path './dataset' \
  --data_path 'obesity_data.csv' \
+ --relevant_features_only 0 \
  --lambda_ 1000 \
  --max_iter 200
 
@@ -11,6 +12,7 @@ python run.py \
  --model 'XGBoost' \
  --root_path './dataset' \
  --data_path 'obesity_data.csv' \
+ --relevant_features_only 0 \
  --n_trees 30 \
  --max_depth 5 \
  --alpha 0.3 \
@@ -20,12 +22,14 @@ python run.py \
  --model 'SVM' \
  --root_path './dataset' \
  --data_path 'obesity_data.csv' \
+ --relevant_features_only 0 \
  --lambda_ 100
 
 python run.py \
  --model 'NeuralNetwork' \
  --root_path './dataset' \
  --data_path 'obesity_data.csv' \
+ --relevant_features_only 0 \
  --train_ratio 0.7 \
  --val_ratio 0.15 \
  --batch_size 16 \

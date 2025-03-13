@@ -1,6 +1,6 @@
 ''' Obesity Prediction '''
 
-from typing import Optional
+from typing import Optional, List
 import os, argparse, time
 from xgboost import XGBClassifier
 from sklearn.linear_model import LogisticRegression
@@ -15,6 +15,24 @@ from data_provider.data_factory import data_provider
 from models import ObesityNN
 
 RANDOM_STATE: Optional[int] = 12
+RELEVANT_FEATURES: List[str] = [
+    'Gender',
+    'Age',
+    'Height',
+    'Weight',
+    'family_history',
+    'FAVC',
+    'FCVC',
+    'NCP',
+    'CAEC',
+    'SMOKE',
+    'CH2O',
+    'SCC',
+    'FAF',
+    'TUE',
+    'CALC',
+    'MTRANS'
+]
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -81,6 +99,7 @@ if __name__ == '__main__':
     parser.add_argument('--shuffle', type=int, default=1, help='Shuffle flag')
     parser.add_argument('--num_workers', type=int, default=1, help='Number of workers')
     parser.add_argument('--drop_last', type=int, default=1, help='Drop last incomplete batch for training')
+    parser.add_argument('--relevant_features_only', type=int, default=0, help='Only select relevant features')
 
     # Model Define
     parser.add_argument('--model', type=str, required=True, default='XGBoost', help='Model name, options: [XGBoost, LogisticRegression, SVM, NeuralNetwork]')
@@ -110,10 +129,12 @@ if __name__ == '__main__':
 
     train_loader, val_loader, test_loader = data_provider(
         args,
-        data_path
+        data_path,
+        RELEVANT_FEATURES if args.relevant_features_only else None
     )
 
-    X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data(data_path)
+    X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data(
+        data_path, RELEVANT_FEATURES if args.relevant_features_only else None)
 
     # Model Training
     print(f'\nTraining {args.model}...')

@@ -57,9 +57,6 @@ class ObesityDataset():
         self.val_test_ratio = 1 - args.train_ratio
         self.test_ratio = 1 - (args.val_ratio / self.val_test_ratio)
 
-        print(f'val_test={self.val_test_ratio}')
-        print(f'test={self.test_ratio}')
-
     def load_data(self, data_path: str) -> Tuple:
         # Data Preprocessing
         X, y = preprocess(data_path)

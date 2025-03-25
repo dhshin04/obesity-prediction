@@ -1,4 +1,4 @@
-python run.py \
+python3 ../run.py \
  --model 'SVM' \
  --root_path './dataset' \
  --data_path 'obesity_data.csv' \

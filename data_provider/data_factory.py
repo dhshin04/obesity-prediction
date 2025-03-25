@@ -5,9 +5,9 @@ from torch.utils.data import DataLoader, random_split
 from .data_loader import ObesityTorchDataset
 
 
-def data_provider(args, data_path: str, relevant_features: List[str] = None) -> Tuple:
+def data_provider(args, data_path: str, doctor: bool, relevant_features: List[str] = None) -> Tuple:
     # Split Data
-    obesity_dataset = ObesityTorchDataset(data_path, relevant_features)
+    obesity_dataset = ObesityTorchDataset(data_path, relevant_features, doctor=doctor)
 
     train_size = int(args.train_ratio * len(obesity_dataset))
     val_size = int(args.val_ratio * len(obesity_dataset))

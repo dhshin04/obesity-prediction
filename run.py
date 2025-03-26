@@ -12,7 +12,7 @@ import torch.optim as optim
 
 from data_provider.data_loader import ObesityDataset
 from data_provider.data_factory import data_provider
-from models import ObesityNN
+from models import ObesityNN, node
 
 RANDOM_STATE: Optional[int] = 12
 RELEVANT_FEATURES: List[str] = [
@@ -121,10 +121,16 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate for Adam optimizer')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
 
+    # NODE Hyperparameters
+    parser.add_argument('--num_layers', type=int, default=2, help='Number of NODE layers')
+    parser.add_argument('--num_trees', type=int, default=32, help='Number of trees per NODE layer')
+    parser.add_argument('--tree_dim', type=int, default=8, help='Dimension per tree in NODE model')
+
     args = parser.parse_args()
 
     # Data Preprocessing
     data_path = os.path.join(os.path.dirname(__file__), args.root_path, args.data_path)
+    print(f'Loading data from {data_path}...')
     obesity_dataset = ObesityDataset(args, random_state=RANDOM_STATE)
 
     train_loader, val_loader, test_loader = data_provider(
@@ -169,6 +175,16 @@ if __name__ == '__main__':
             fc2_out=args.fc2_out,
             fc3_out=args.fc3_out,
             dropout=args.dropout
+        )
+        train_model(args, model, train_loader, val_loader, test_loader)
+    elif args.model == 'NODE':
+        model = node.NODEModel(
+            input_size=args.n_features,
+            output_size=args.n_classes,
+            dropout=args.dropout,
+            num_layers=args.num_layers,
+            num_trees=args.num_trees,
+            tree_dim=args.tree_dim
         )
         train_model(args, model, train_loader, val_loader, test_loader)
     else:

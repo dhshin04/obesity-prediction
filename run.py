@@ -2,7 +2,7 @@
 
 from typing import Optional, List
 import os, argparse, time
-from xgboost import XGBClassifier
+from xgboost import XGBClassifier, plot_importance
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score
@@ -13,6 +13,17 @@ import torch.optim as optim
 from data_provider.data_loader import ObesityDataset
 from data_provider.data_factory import data_provider
 from models import ObesityNN, node
+
+# For feature importance branch
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import LabelEncoder
+
+# For stacking ensemble branch
+from sklearn.ensemble import StackingClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.ensemble import RandomForestClassifier
 
 RANDOM_STATE: Optional[int] = 12
 RELEVANT_FEATURES: List[str] = [
@@ -102,7 +113,8 @@ if __name__ == '__main__':
     parser.add_argument('--relevant_features_only', type=int, default=0, help='Only select relevant features')
 
     # Model Define
-    parser.add_argument('--model', type=str, required=True, default='XGBoost', help='Model name, options: [XGBoost, LogisticRegression, SVM, NeuralNetwork]')
+    parser.add_argument('--model', type=str, required=True, default='XGBoost', 
+                        help='Model name, options: [XGBoost, LogisticRegression, SVM, NeuralNetwork, NODE, FeatureImportance]')
     
     # XGBoost Hyperparameters
     parser.add_argument('--n_trees', type=int, default=10, help='Number of trees in ensemble')
@@ -129,20 +141,20 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Data Preprocessing
-    data_path = os.path.join(os.path.dirname(__file__), args.root_path, args.data_path)
-    print(f'Loading data from {data_path}...')
+    data_path_full = os.path.join(os.path.dirname(__file__), args.root_path, args.data_path)
+    print(f'Loading data from {data_path_full}...')
     obesity_dataset = ObesityDataset(args, random_state=RANDOM_STATE)
 
     train_loader, val_loader, test_loader = data_provider(
         args,
-        data_path,
+        data_path_full,
         RELEVANT_FEATURES if args.relevant_features_only else None
     )
 
     X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data(
-        data_path, RELEVANT_FEATURES if args.relevant_features_only else None)
+        data_path_full, RELEVANT_FEATURES if args.relevant_features_only else None)
 
-    # Model Training
+    # Model Training / Feature Importance Identification
     print(f'\nTraining {args.model}...')
     if args.model == 'XGBoost':
         model = XGBClassifier(
@@ -151,15 +163,15 @@ if __name__ == '__main__':
             learning_rate = args.alpha, 
             reg_lambda = args.lambda_,
             objective = 'multi:softmax',
-            num_class=7, 
-            random_state=RANDOM_STATE
+            num_class = 7, 
+            random_state = RANDOM_STATE
         )
         model.fit(X_train, y_train)
     elif args.model == 'LogisticRegression':
         model = LogisticRegression(
             C = args.lambda_,
             max_iter = args.max_iter,
-            random_state=RANDOM_STATE
+            random_state = RANDOM_STATE
         )
         model.fit(X_train, y_train)
     elif args.model == 'SVM':
@@ -187,11 +199,120 @@ if __name__ == '__main__':
             tree_dim=args.tree_dim
         )
         train_model(args, model, train_loader, val_loader, test_loader)
+    elif args.model == 'FeatureImportance':
+        print(f'Loading data for feature importance from {data_path_full}...')
+        df = pd.read_csv(data_path_full)
+        # Define features and target (adjust target name as needed)
+        features = RELEVANT_FEATURES
+        target = 'Obesity'  # change if your target column is named differently
+        if target not in df.columns:
+            raise ValueError(f"Target column '{target}' not found. Available columns: {df.columns.tolist()}")
+        # Load a copy of the feature columns
+        X = df[features].copy()
+        y = df[target]
+
+        # Encode target labels to integers
+        le = LabelEncoder()
+        y = le.fit_transform(y)
+
+        # Convert all object-type columns to 'category' using apply
+        X = X.apply(lambda col: col.astype('category') if col.dtype == 'object' else col)
+        
+        # Instantiate the XGBoost classifier with enable_categorical=True so categorical types are accepted.
+        model = XGBClassifier(
+            n_estimators = args.n_trees,
+            max_depth = args.max_depth,
+            learning_rate = args.alpha,
+            reg_lambda = args.lambda_,
+            objective = 'multi:softmax',
+            num_class = args.n_classes,
+            random_state = RANDOM_STATE,
+            enable_categorical = True
+        )
+        print("Training XGBoost model for feature importance...")
+        model.fit(X, y)
+        
+        # Retrieve feature importances based on gain
+        importances = model.get_booster().get_score(importance_type='gain')
+        sorted_importances = sorted(importances.items(), key=lambda x: x[1], reverse=True)
+        
+        print("Feature Importance (by gain):")
+        for feat, imp in sorted_importances:
+            print(f"{feat}: {imp:.4g}")
+        
+        ax = plot_importance(model.get_booster(), importance_type='gain', title='Feature Importance by Gain')
+        plt.tight_layout()
+        plt.show()
+        exit(0)
+
+    elif args.model == 'Stacking':
+        print("Training stacking ensemble using data_loader output...")
+        import pandas as pd
+
+        # Assume the data loader already returns only the relevant features.
+        # Just make sure the data is in DataFrame format.
+        if not hasattr(X_train, 'columns'):
+            X_train = pd.DataFrame(X_train)
+        X_train_subset = X_train.copy()
+
+        if not hasattr(X_val, 'columns'):
+            X_val = pd.DataFrame(X_val)
+        X_val_subset = X_val.copy()
+
+        if not hasattr(X_test, 'columns'):
+            X_test = pd.DataFrame(X_test)
+        X_test_subset = X_test.copy()
+
+        # Convert any object-type columns to numeric codes.
+        def to_numeric(df):
+            df_numeric = df.copy()
+            for col in df_numeric.columns:
+                if df_numeric[col].dtype == 'object':
+                    df_numeric[col] = df_numeric[col].astype('category').cat.codes
+            return df_numeric
+
+        X_train_stack = to_numeric(X_train_subset.copy())
+        X_val_stack   = to_numeric(X_val_subset.copy())
+        X_test_stack  = to_numeric(X_test_subset.copy())
+
+        # Define base estimators.
+
+        base_estimators = [
+            ('xgb', XGBClassifier(
+                n_estimators=args.n_trees,
+                max_depth=args.max_depth,
+                learning_rate=args.alpha,
+                reg_lambda=args.lambda_,
+                objective='multi:softmax',
+                num_class=args.n_classes,
+                random_state=RANDOM_STATE,
+                enable_categorical=True
+            )),
+            ('lr', LogisticRegression(max_iter=args.max_iter, random_state=RANDOM_STATE)),
+            ('svm', SVC(probability=True, C=args.lambda_, random_state=RANDOM_STATE))
+        ]
+        
+        # Use RandomForestClassifier as the final estimator.
+        final_estimator = RandomForestClassifier(n_estimators=100, random_state=RANDOM_STATE)
+        stacking_model = StackingClassifier(
+            estimators=base_estimators,
+            final_estimator=final_estimator,
+            cv=5,
+            passthrough=False
+        )
+        
+        print("Training stacking ensemble...")
+        stacking_model.fit(X_train_stack, y_train)
+        model = stacking_model
+        # Override inference data with the numeric versions.
+        X_val = X_val_stack
+        X_test = X_test_stack
+
     else:
         raise Exception('Model is not defined')
 
-    if args.model != 'NeuralNetwork':
-        # Inference
+    if args.model not in ['NeuralNetwork', 'FeatureImportance']:
+        # Inference for models that implement predict()
         yhat_val = model.predict(X_val)
         precision_val = precision_score(y_true=y_val, y_pred=yhat_val, average='weighted')
         recall_val = recall_score(y_true=y_val, y_pred=yhat_val, average='weighted')
@@ -205,3 +326,4 @@ if __name__ == '__main__':
         f1_test = f1_score(y_true=y_test, y_pred=yhat_test, average='weighted')
         accuracy_test = accuracy_score(y_true=y_test, y_pred=yhat_test)
         print(f'Test Set Precision: {precision_test*100:.2f}%, Recall: {recall_test*100:.2f}%, F1: {f1_test*100:.2f}%, Accuracy: {accuracy_test*100:.2f}%')
+    

@@ -1,0 +1,17 @@
+python run.py \
+    --root_path "./dataset" \
+    --data_path "obesity_data.csv" \
+    --model Stacking \
+    --n_trees 10 \
+    --max_depth 5 \
+    --alpha 0.3 \
+    --lambda_ 0.2 \
+    --n_features 19 \
+    --n_classes 7 \
+    --fc1_out 128 \
+    --fc2_out 256 \
+    --fc3_out 128 \
+    --dropout 0.2 \
+    --lr 0.001 \
+    --epochs 10 \
+    --max_iter 100

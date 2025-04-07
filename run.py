@@ -9,6 +9,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_sc
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
 
 from data_provider.data_loader import ObesityDataset
 from data_provider.data_factory import data_provider
@@ -121,7 +122,7 @@ def train_fusion_model(args, X_train, X_val, X_test, y_train, y_val, y_test):
             random_state=RANDOM_STATE
         ),
         'SVM': SVC(
-            C=args.lambda_
+            C=args.lambda_,
         )
     }
     
@@ -142,6 +143,19 @@ def train_fusion_model(args, X_train, X_val, X_test, y_train, y_val, y_test):
     )
     nn_model.to(DEVICE)
     
+    def create_loader(X, y, batch_size):
+        tensor_x = torch.FloatTensor(X.values if hasattr(X, 'values') else X)
+        tensor_y = torch.LongTensor(y)
+        dataset = TensorDataset(tensor_x, tensor_y)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    train_loader = create_loader(X_train, y_train, args.batch_size)
+    val_loader = create_loader(X_val, y_val, args.batch_size)
+    test_loader = create_loader(X_test, y_test, args.batch_size)
+
+    print("\nTraining neural network for fusion (actual training)...")
+    train_model(args, nn_model, train_loader, val_loader, test_loader)
+
     def get_nn_predictions(model, X):
         print(f"\nGetting NN predictions for {len(X)} samples")
         model.eval()
@@ -189,36 +203,31 @@ def train_fusion_model(args, X_train, X_val, X_test, y_train, y_val, y_test):
     X_test_fusion = add_predictions(X_test, models, nn_model)
     
     print("\nTraining Custom Logistic Regression on fused data...")
-    fusion_model = CustomLogisticRegression(
-        learning_rate=args.lr,
-        n_iterations=args.max_iter
+    fusion_model = LogisticRegression(
+        multi_class='multinomial',
+        solver='lbfgs'  # works well for multi-class
     )
-    
-    y_train_binary = (y_train > 3).astype(int)
-    print(f"\nBinary class distribution - Train: {np.bincount(y_train_binary)}, Val: {np.bincount((y_val > 3).astype(int))}, Test: {np.bincount((y_test > 3).astype(int))}")
-    
+
     print("\nFitting fusion model...")
-    fusion_model.fit(X_train_fusion.values, y_train_binary)
+    fusion_model.fit(X_train_fusion.values, y_train)
     
     # Evaluate
-    def evaluate_fusion(model, X, y_true):
+    def evaluate_multiclass(model, X, y_true):
         print(f"\nEvaluating on {len(X)} samples...")
         y_pred = model.predict(X.values)
         print(f"Prediction distribution: {np.bincount(y_pred)}")
         print(f"Actual distribution: {np.bincount(y_true)}")
-        precision = precision_score(y_true, y_pred, average='binary')
-        recall = recall_score(y_true, y_pred, average='binary')
-        f1 = f1_score(y_true, y_pred, average='binary')
+        precision = precision_score(y_true, y_pred, average='macro')
+        recall = recall_score(y_true, y_pred, average='macro')
+        f1 = f1_score(y_true, y_pred, average='macro')
         accuracy = accuracy_score(y_true, y_pred)
         return precision, recall, f1, accuracy
     
-    y_val_binary = (y_val > 3).astype(int)
-    val_precision, val_recall, val_f1, val_accuracy = evaluate_fusion(
-        fusion_model, X_val_fusion, y_val_binary
+    val_precision, val_recall, val_f1, val_accuracy = evaluate_multiclass(
+        fusion_model, X_val_fusion, y_val
     )
-    y_test_binary = (y_test > 3).astype(int)
-    test_precision, test_recall, test_f1, test_accuracy = evaluate_fusion(
-        fusion_model, X_test_fusion, y_test_binary
+    test_precision, test_recall, test_f1, test_accuracy = evaluate_multiclass(
+        fusion_model, X_test_fusion, y_test
     )
     print(f'Validation Set Precision: {val_precision*100:.2f}%, Recall: {val_recall*100:.2f}%, '
         f'F1: {val_f1*100:.2f}%, Accuracy: {val_accuracy*100:.2f}%')

@@ -24,6 +24,10 @@ from sklearn.ensemble import StackingClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.ensemble import RandomForestClassifier
+from models.custom_log_reg import CustomLogisticRegression
+import numpy as np
+import pandas as pd
+
 
 RANDOM_STATE: Optional[int] = 12
 RELEVANT_FEATURES: List[str] = [
@@ -96,7 +100,131 @@ def train_model(args, model, train_loader, val_loader, test_loader):
             test_accuracy = 100 * correct / total if total > 0 else 0
             
         print(f'Epoch {epoch+1}/{args.epochs}, Train Loss: {train_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%, Test Accuracy: {test_accuracy:.2f}%, Time: {time.time() - start:.4f}s')
+    
+def train_fusion_model(args, X_train, X_val, X_test, y_train, y_val, y_test):
+    print("Training fusion model...")
+    print(f"Input shapes - X_train: {X_train.shape}, y_train: {y_train.shape}")
+    
+    models = {
+        'XGBoost': XGBClassifier(
+            n_estimators=args.n_trees,
+            max_depth=args.max_depth,
+            learning_rate=args.alpha,
+            reg_lambda=args.lambda_,
+            objective='multi:softmax',
+            num_class=7,
+            random_state=RANDOM_STATE
+        ),
+        'LogisticRegression': LogisticRegression(
+            C=args.lambda_,
+            max_iter=args.max_iter,
+            random_state=RANDOM_STATE
+        ),
+        'SVM': SVC(
+            C=args.lambda_
+        )
+    }
+    
+    for name, model in models.items():
+        print(f"\nTraining {name} for fusion...")
+        model.fit(X_train, y_train)
+        train_score = model.score(X_train, y_train)
+        print(f"{name} training accuracy: {train_score:.4f}")
+    
+    print("\nTraining Neural Network for fusion...")
+    nn_model = ObesityNN.Model(
+        input_size=args.n_features,
+        output_size=args.n_classes,
+        fc1_out=args.fc1_out,
+        fc2_out=args.fc2_out,
+        fc3_out=args.fc3_out,
+        dropout=args.dropout
+    )
+    nn_model.to(DEVICE)
+    
+    def get_nn_predictions(model, X):
+        print(f"\nGetting NN predictions for {len(X)} samples")
+        model.eval()
+        
+        # Convert to numpy array if it's a DataFrame
+        if hasattr(X, 'values'):  # Check if it's a pandas DataFrame
+            X_numpy = X.values
+        else:
+            X_numpy = X  # Assume it's already a numpy array
+        
+        X_tensor = torch.FloatTensor(X_numpy).to(DEVICE)
+        with torch.no_grad():
+            outputs = model(X_tensor)
+            _, predicted = torch.max(outputs.data, 1)
+        print(f"NN predictions shape: {predicted.shape}")
+        return predicted.cpu().numpy()
+    
+    def add_predictions(X, models, nn_model=None):
+        print(f"\nAdding predictions to dataset of shape {X.shape}")
+        # Convert to DataFrame if it's a numpy array
+        if isinstance(X, pd.DataFrame):
+            X_new = X.copy()
+        else:
+            # If it's a numpy array, convert to DataFrame
+            X_new = pd.DataFrame(X)
+            
+        for name, model in models.items():
+            print(name, model)
+            preds = model.predict(X)
+            print(X_new, preds)
+            print(f"Added {name} predictions - shape: {preds.shape}, unique values: {np.unique(preds)}")
+            X_new = X_new.assign(**{f'pred_{name}': preds})
+        
+        if nn_model:
+            nn_preds = get_nn_predictions(nn_model, X)
+            print(f"Added NeuralNetwork predictions - shape: {nn_preds.shape}, unique values: {np.unique(nn_preds)}")
+            X_new['pred_NeuralNetwork'] = nn_preds
+        
+        print(f"Final fused dataset shape: {X_new.shape}")
+        return X_new
+    
+    print("\nCreating fused datasets:")
+    X_train_fusion = add_predictions(X_train, models, nn_model)
+    X_val_fusion = add_predictions(X_val, models, nn_model)
+    X_test_fusion = add_predictions(X_test, models, nn_model)
+    
+    print("\nTraining Custom Logistic Regression on fused data...")
+    fusion_model = CustomLogisticRegression(
+        learning_rate=args.lr,
+        n_iterations=args.max_iter
+    )
+    
+    y_train_binary = (y_train > 3).astype(int)
+    print(f"\nBinary class distribution - Train: {np.bincount(y_train_binary)}, Val: {np.bincount((y_val > 3).astype(int))}, Test: {np.bincount((y_test > 3).astype(int))}")
+    
+    print("\nFitting fusion model...")
+    fusion_model.fit(X_train_fusion.values, y_train_binary)
+    
+    # Evaluate
+    def evaluate_fusion(model, X, y_true):
+        print(f"\nEvaluating on {len(X)} samples...")
+        y_pred = model.predict(X.values)
+        print(f"Prediction distribution: {np.bincount(y_pred)}")
+        print(f"Actual distribution: {np.bincount(y_true)}")
+        precision = precision_score(y_true, y_pred, average='binary')
+        recall = recall_score(y_true, y_pred, average='binary')
+        f1 = f1_score(y_true, y_pred, average='binary')
+        accuracy = accuracy_score(y_true, y_pred)
+        return precision, recall, f1, accuracy
+    
+    y_val_binary = (y_val > 3).astype(int)
+    val_precision, val_recall, val_f1, val_accuracy = evaluate_fusion(
+        fusion_model, X_val_fusion, y_val_binary
+    )
+    y_test_binary = (y_test > 3).astype(int)
+    test_precision, test_recall, test_f1, test_accuracy = evaluate_fusion(
+        fusion_model, X_test_fusion, y_test_binary
+    )
+    print(f'Validation Set Precision: {val_precision*100:.2f}%, Recall: {val_recall*100:.2f}%, '
+        f'F1: {val_f1*100:.2f}%, Accuracy: {val_accuracy*100:.2f}%')
 
+    print(f'Test Set Precision: {test_precision*100:.2f}%, Recall: {test_recall*100:.2f}%, '
+        f'F1: {test_f1*100:.2f}%, Accuracy: {test_accuracy*100:.2f}%')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -148,22 +276,30 @@ if __name__ == '__main__':
 
     train_loader, val_loader, test_loader = data_provider(
         args,
-        data_path,
+        data_path_full,
         args.doctor,
         RELEVANT_FEATURES if args.relevant_features_only else None
     )
 
     if args.doctor:
         X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data_doctor(
-            data_path, RELEVANT_FEATURES if args.relevant_features_only else None)
+            data_path_full, RELEVANT_FEATURES if args.relevant_features_only else None)
     else:
         X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data_patient(
-            data_path, RELEVANT_FEATURES if args.relevant_features_only else None)
+            data_path_full, RELEVANT_FEATURES if args.relevant_features_only else None)
     
 
     # Model Training / Feature Importance Identification
     print(f'\nTraining {args.model}...')
-    if args.model == 'XGBoost':
+    if args.model == 'Fusion':
+        print("\n=== Starting Fusion Model Training ===")
+        print(f"Original data shapes:")
+        print(f"X_train: {X_train.shape}, X_val: {X_val.shape}, X_test: {X_test.shape}")
+        print(f"y_train: {y_train.shape}, y_val: {y_val.shape}, y_test: {y_test.shape}")
+        print(f"Unique classes in y_train: {np.unique(y_train, return_counts=True)}")
+        
+        train_fusion_model(args, X_train, X_val, X_test, y_train, y_val, y_test)
+    elif args.model == 'XGBoost':
         model = XGBClassifier(
             n_estimators = args.n_trees, 
             max_depth = args.max_depth, 
@@ -254,7 +390,6 @@ if __name__ == '__main__':
 
     elif args.model == 'Stacking':
         print("Training stacking ensemble using data_loader output...")
-        import pandas as pd
 
         # Assume the data loader already returns only the relevant features.
         # Just make sure the data is in DataFrame format.
@@ -318,7 +453,7 @@ if __name__ == '__main__':
     else:
         raise Exception('Model is not defined')
 
-    if args.model not in ['NeuralNetwork', 'FeatureImportance']:
+    if args.model not in ['NeuralNetwork', 'FeatureImportance', 'Fusion']:
         # Inference for models that implement predict()
         yhat_val = model.predict(X_val)
         precision_val = precision_score(y_true=y_val, y_pred=yhat_val, average='weighted')

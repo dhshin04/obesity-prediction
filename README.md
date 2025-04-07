@@ -10,3 +10,4 @@ Create a new dataset folder and add these two datasets:
 ./dataset
 ```
 
+# to convert to linux script: sed -i 's/\r$//' FusionModel.sh

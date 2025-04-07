@@ -1,4 +1,5 @@
-python run.py \
+#!/bin/bash
+python3 -u ../../run.py \
  --model 'NeuralNetwork' \
  --root_path './dataset' \
  --data_path 'obesity_data.csv' \

@@ -111,6 +111,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_workers', type=int, default=1, help='Number of workers')
     parser.add_argument('--drop_last', type=int, default=1, help='Drop last incomplete batch for training')
     parser.add_argument('--relevant_features_only', type=int, default=0, help='Only select relevant features')
+    parser.add_argument('--doctor', type=int, default=1, help='Select True if you desire the doctor\'s dataset or False if you desire the patient\'s dataset')
 
     # Model Define
     parser.add_argument('--model', type=str, required=True, default='XGBoost', 
@@ -147,12 +148,18 @@ if __name__ == '__main__':
 
     train_loader, val_loader, test_loader = data_provider(
         args,
-        data_path_full,
+        data_path,
+        args.doctor,
         RELEVANT_FEATURES if args.relevant_features_only else None
     )
 
-    X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data(
-        data_path_full, RELEVANT_FEATURES if args.relevant_features_only else None)
+    if args.doctor:
+        X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data_doctor(
+            data_path, RELEVANT_FEATURES if args.relevant_features_only else None)
+    else:
+        X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data_patient(
+            data_path, RELEVANT_FEATURES if args.relevant_features_only else None)
+    
 
     # Model Training / Feature Importance Identification
     print(f'\nTraining {args.model}...')

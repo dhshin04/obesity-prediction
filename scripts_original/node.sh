@@ -1,6 +1,6 @@
 #!/bin/bash
 # This script runs the NODE model using run.py with preset parameters.
-python3 ../run.py \
+python3 run.py \
     --root_path './dataset' \
     --data_path 'obesity_data.csv' \
     --model NODE \

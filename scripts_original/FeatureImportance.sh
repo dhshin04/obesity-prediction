@@ -1,8 +1,7 @@
 #!/bin/bash
-# filepath: c:\Users\kutha\OneDrive\Documents\CS 4774 Machine Learning\Project\obesity-prediction\scripts\feature_importance.sh
 # This script runs the feature importance identification using run.py.
 
-python3 ../run.py \
+python3 run.py \
     --root_path "./dataset" \
     --data_path "obesity_data.csv" \
     --model FeatureImportance \

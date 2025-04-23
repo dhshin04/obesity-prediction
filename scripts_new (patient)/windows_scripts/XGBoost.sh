@@ -1,5 +1,5 @@
 #!/bin/bash
-python3 -u ../../run.py \
+python -u ../../run.py \
  --model 'XGBoost' \
  --root_path './dataset' \
  --data_path 'obesity_dataset_patient.csv' \

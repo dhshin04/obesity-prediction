@@ -1,11 +1,16 @@
+#!/bin/bash
+
 python3 run.py \
+  --model LossCurve \
   --root_path './dataset' \
   --data_path 'obesity_data.csv' \
-  --model Stacking \
-  --n_trees 100 \
-  --max_depth 6 \
-  --alpha 0.1 \
-  --lambda_ 1.0 \
+  --relevant_features_only 0 \
+  --train_ratio 0.7 \
+  --val_ratio 0.15 \
+  --batch_size 16 \
+  --shuffle 1 \
+  --num_workers 1 \
+  --drop_last 1 \
   --n_features 19 \
   --n_classes 7 \
   --fc1_out 128 \
@@ -14,4 +19,3 @@ python3 run.py \
   --dropout 0.2 \
   --lr 0.001 \
   --epochs 20 \
-  --max_iter 1000 

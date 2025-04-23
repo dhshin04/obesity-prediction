@@ -1,0 +1,14 @@
+python3 run.py \
+    --root_path './dataset' \
+    --data_path 'obesity_dataset_patient.csv' \
+    --model NODE \
+    --relevant_features_only 0 \
+    --n_features 14 \
+    --n_classes 7 \
+    --dropout 0.2 \
+    --lr 0.001 \
+    --epochs 10 \
+    --num_layers 2 \
+    --num_trees 32 \
+    --tree_dim 8 \
+    --doctor 0

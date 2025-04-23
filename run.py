@@ -25,6 +25,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.ensemble import RandomForestClassifier
 
+from sklearn.metrics import log_loss
+from sklearn.metrics import hinge_loss
+
 RANDOM_STATE: Optional[int] = 12
 RELEVANT_FEATURES: List[str] = [
     'Gender',
@@ -47,55 +50,199 @@ RELEVANT_FEATURES: List[str] = [
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def train_model(args, model, train_loader, val_loader, test_loader):
+def train_model(args, model, train_loader, val_loader, test_loader, return_loss=False):
     model.to(DEVICE)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+    loss_history = []
+    val_acc_history = []
 
     for epoch in range(args.epochs):
-        start = time.time()
         model.train()
         train_loss = 0
         for x_train, y_train in train_loader:
             x_train, y_train = x_train.to(DEVICE), y_train.to(DEVICE)
-
             optimizer.zero_grad()
             yhat = model(x_train)
             loss = criterion(yhat, y_train)
             loss.backward()
             optimizer.step()
-
             train_loss += loss.item()
-        
         train_loss /= len(train_loader)
+        loss_history.append(train_loss)
 
+        # Validation accuracy
         model.eval()
-        correct, total = 0, 0
+        correct = 0
+        total = 0
         with torch.no_grad():
             for x_val, y_val in val_loader:
                 x_val, y_val = x_val.to(DEVICE), y_val.to(DEVICE)
-                yhat = model(x_val)
-                y_pred = torch.argmax(yhat, dim=1)  # Get class index with max probability
-                
-                total += y_val.size(0)  # Total number of samples
-                correct += (y_pred == y_val).sum().item()  # Count correct predictions
-            
-            val_accuracy = 100 * correct / total if total > 0 else 0
-                
-        correct, total = 0, 0
-        with torch.no_grad():
-            for x_test, y_test in test_loader:
-                x_test, y_test = x_test.to(DEVICE), y_test.to(DEVICE)
-                yhat = model(x_test)
+                outputs = model(x_val)
+                _, predicted = torch.max(outputs.data, 1)
+                total += y_val.size(0)
+                correct += (predicted == y_val).sum().item()
+        val_acc = 100 * correct / total
+        val_acc_history.append(val_acc)
 
-                y_pred = torch.argmax(yhat, dim=1)  # Get class index with max probability
-                
-                total += y_test.size(0)  # Total number of samples
-                correct += (y_pred == y_test).sum().item()  # Count correct predictions
-            
-            test_accuracy = 100 * correct / total if total > 0 else 0
-            
-        print(f'Epoch {epoch+1}/{args.epochs}, Train Loss: {train_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%, Test Accuracy: {test_accuracy:.2f}%, Time: {time.time() - start:.4f}s')
+    if return_loss:
+        return loss_history, val_acc_history
+
+
+def sklearn_loss_curve(model, X_train, y_train, X_val, y_val, epochs, batch_size):
+    n = X_train.shape[0]
+    losses = []
+    val_accs = []
+    for epoch in range(epochs):
+        perm = np.random.permutation(n)
+        X_train_shuffled = X_train[perm]
+        y_train_shuffled = y_train[perm]
+        epoch_loss = 0
+        n_batches = 0
+        for i in range(0, n, batch_size):
+            X_batch = X_train_shuffled[i:i+batch_size]
+            y_batch = y_train_shuffled[i:i+batch_size]
+            model.partial_fit(X_batch, y_batch, classes=np.unique(y_train))
+            y_pred_proba = model.predict_proba(X_batch)
+            epoch_loss += log_loss(y_batch, y_pred_proba, labels=np.unique(y_train))
+            n_batches += 1
+        losses.append(epoch_loss / n_batches)
+        # Validation accuracy
+        val_pred = model.predict(X_val)
+        val_acc = (val_pred == y_val).mean() * 100
+        val_accs.append(val_acc)
+    return losses, val_accs
+
+def sklearn_hinge_loss_curve(model, X_train, y_train, X_val, y_val, epochs, batch_size):
+    n = X_train.shape[0]
+    losses = []
+    val_accs = []
+    for epoch in range(epochs):
+        perm = np.random.permutation(n)
+        X_train_shuffled = X_train[perm]
+        y_train_shuffled = y_train[perm]
+        epoch_loss = 0
+        n_batches = 0
+        for i in range(0, n, batch_size):
+            X_batch = X_train_shuffled[i:i+batch_size]
+            y_batch = y_train_shuffled[i:i+batch_size]
+            model.partial_fit(X_batch, y_batch, classes=np.unique(y_train))
+            y_decision = model.decision_function(X_batch)
+            epoch_loss += hinge_loss(y_batch, y_decision, labels=np.unique(y_train))
+            n_batches += 1
+        losses.append(epoch_loss / n_batches)
+        # Validation accuracy
+        val_pred = model.predict(X_val)
+        val_acc = (val_pred == y_val).mean() * 100
+        val_accs.append(val_acc)
+    return losses, val_accs
+
+
+def build_stacking_model(RANDOM_STATE, args, X_train, X_val, X_test, y_train, y_val):
+    print("Training stacking ensemble using data_loader output...")
+    import pandas as pd
+
+        # Assume the data loader already returns only the relevant features.
+        # Just make sure the data is in DataFrame format.
+    if not hasattr(X_train, 'columns'):
+        X_train = pd.DataFrame(X_train)
+    X_train_subset = X_train.copy()
+
+    if not hasattr(X_val, 'columns'):
+        X_val = pd.DataFrame(X_val)
+    X_val_subset = X_val.copy()
+
+    if not hasattr(X_test, 'columns'):
+        X_test = pd.DataFrame(X_test)
+    X_test_subset = X_test.copy()
+
+        # Convert any object-type columns to numeric codes.
+    def to_numeric(df):
+        df_numeric = df.copy()
+        for col in df_numeric.columns:
+            if df_numeric[col].dtype == 'object':
+                df_numeric[col] = df_numeric[col].astype('category').cat.codes
+        return df_numeric
+
+    X_train_stack = to_numeric(X_train_subset.copy())
+    X_val_stack   = to_numeric(X_val_subset.copy())
+    X_test_stack  = to_numeric(X_test_subset.copy())
+
+        # Define base estimators.
+
+    base_estimators = [
+            ('xgb', XGBClassifier(
+                n_estimators=args.n_trees,
+                max_depth=args.max_depth,
+                learning_rate=args.alpha,
+                reg_lambda=args.lambda_,
+                objective='multi:softmax',
+                num_class=args.n_classes,
+                random_state=RANDOM_STATE,
+                enable_categorical=True
+            )),
+            ('lr', LogisticRegression(max_iter=args.max_iter, random_state=RANDOM_STATE)),
+            ('svm', SVC(probability=True, C=args.lambda_, random_state=RANDOM_STATE))
+        ]
+        
+        # Use RandomForestClassifier as the final estimator.
+    final_estimator = RandomForestClassifier(n_estimators=100, random_state=RANDOM_STATE)
+    stacking_model = StackingClassifier(
+            estimators=base_estimators,
+            final_estimator=final_estimator,
+            cv=5,
+            passthrough=False
+        )
+        
+    print("Training stacking ensemble...")
+    stacking_model.fit(X_train_stack, y_train)
+    model = stacking_model
+        # Override inference data with the numeric versions.
+    X_val = X_val_stack
+    X_test = X_test_stack
+
+        # Stacking (simulate epoch-wise training)
+    stacking_losses = []
+    stacking_val_accs = []
+    n = X_train_stack.shape[0]
+    step = n // args.epochs
+
+    for epoch in range(1, args.epochs + 1):
+        end = min(epoch * step, n)
+        if end == 0:
+            continue
+        X_train_epoch = X_train_stack[:end]
+        y_train_epoch = y_train[:end]
+        stacking_model = StackingClassifier(
+                estimators=[
+                    ('xgb', XGBClassifier(
+                        n_estimators=args.n_trees,
+                        max_depth=args.max_depth,
+                        learning_rate=args.alpha,
+                        reg_lambda=args.lambda_,
+                        objective='multi:softmax',
+                        num_class=args.n_classes,
+                        random_state=RANDOM_STATE,
+                        enable_categorical=True
+                    )),
+                    ('lr', LogisticRegression(max_iter=args.max_iter, random_state=RANDOM_STATE)),
+                    ('svm', SVC(probability=True, C=args.lambda_, random_state=RANDOM_STATE))
+                ],
+                final_estimator=RandomForestClassifier(n_estimators=100, random_state=RANDOM_STATE),
+                cv=5,
+                passthrough=False
+            )
+        stacking_model.fit(X_train_epoch, y_train_epoch)
+        y_pred = stacking_model.predict(X_val_stack)
+        val_acc = (y_pred == y_val).mean() * 100
+        stacking_val_accs.append(val_acc)
+        try:
+            y_pred_proba = stacking_model.predict_proba(X_val_stack)
+            loss = log_loss(y_val, y_pred_proba, labels=np.unique(y_train))
+        except Exception:
+            loss = float('nan')
+        stacking_losses.append(loss)
+    return X_train,X_val,X_test,model, stacking_losses, stacking_val_accs
 
 
 if __name__ == '__main__':
@@ -115,7 +262,7 @@ if __name__ == '__main__':
 
     # Model Define
     parser.add_argument('--model', type=str, required=True, default='XGBoost', 
-                        help='Model name, options: [XGBoost, LogisticRegression, SVM, NeuralNetwork, NODE, FeatureImportance]')
+                        help='Model name, options: [XGBoost, LogisticRegression, SVM, NeuralNetwork, NODE, FeatureImportance, Stacking, LossCurve]')
     
     # XGBoost Hyperparameters
     parser.add_argument('--n_trees', type=int, default=10, help='Number of trees in ensemble')
@@ -148,17 +295,17 @@ if __name__ == '__main__':
 
     train_loader, val_loader, test_loader = data_provider(
         args,
-        data_path,
+        data_path_full,
         args.doctor,
         RELEVANT_FEATURES if args.relevant_features_only else None
     )
 
     if args.doctor:
         X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data_doctor(
-            data_path, RELEVANT_FEATURES if args.relevant_features_only else None)
+            data_path_full, RELEVANT_FEATURES if args.relevant_features_only else None)
     else:
         X_train, X_val, X_test, y_train, y_val, y_test = obesity_dataset.load_data_patient(
-            data_path, RELEVANT_FEATURES if args.relevant_features_only else None)
+            data_path_full, RELEVANT_FEATURES if args.relevant_features_only else None)
     
 
     # Model Training / Feature Importance Identification
@@ -253,84 +400,138 @@ if __name__ == '__main__':
         exit(0)
 
     elif args.model == 'Stacking':
-        print("Training stacking ensemble using data_loader output...")
-        import pandas as pd
+        X_train, X_val, X_test, model, _, _ = build_stacking_model(RANDOM_STATE, args, X_train, X_val, X_test, y_train, y_val)
 
-        # Assume the data loader already returns only the relevant features.
-        # Just make sure the data is in DataFrame format.
-        if not hasattr(X_train, 'columns'):
-            X_train = pd.DataFrame(X_train)
-        X_train_subset = X_train.copy()
-
-        if not hasattr(X_val, 'columns'):
-            X_val = pd.DataFrame(X_val)
-        X_val_subset = X_val.copy()
-
-        if not hasattr(X_test, 'columns'):
-            X_test = pd.DataFrame(X_test)
-        X_test_subset = X_test.copy()
-
-        # Convert any object-type columns to numeric codes.
-        def to_numeric(df):
-            df_numeric = df.copy()
-            for col in df_numeric.columns:
-                if df_numeric[col].dtype == 'object':
-                    df_numeric[col] = df_numeric[col].astype('category').cat.codes
-            return df_numeric
-
-        X_train_stack = to_numeric(X_train_subset.copy())
-        X_val_stack   = to_numeric(X_val_subset.copy())
-        X_test_stack  = to_numeric(X_test_subset.copy())
-
-        # Define base estimators.
-
-        base_estimators = [
-            ('xgb', XGBClassifier(
-                n_estimators=args.n_trees,
-                max_depth=args.max_depth,
-                learning_rate=args.alpha,
-                reg_lambda=args.lambda_,
-                objective='multi:softmax',
-                num_class=args.n_classes,
-                random_state=RANDOM_STATE,
-                enable_categorical=True
-            )),
-            ('lr', LogisticRegression(max_iter=args.max_iter, random_state=RANDOM_STATE)),
-            ('svm', SVC(probability=True, C=args.lambda_, random_state=RANDOM_STATE))
-        ]
-        
-        # Use RandomForestClassifier as the final estimator.
-        final_estimator = RandomForestClassifier(n_estimators=100, random_state=RANDOM_STATE)
-        stacking_model = StackingClassifier(
-            estimators=base_estimators,
-            final_estimator=final_estimator,
-            cv=5,
-            passthrough=False
+    elif args.model == 'LossCurve':
+        print("Plotting loss curves and validation accuracy for NeuralNetwork, LogisticRegression, SVM, and XGBoost...")
+        _, _, _, model, stacking_losses, stacking_val_accs = build_stacking_model(RANDOM_STATE, args, X_train, X_val, X_test, y_train, y_val)
+        # Neural Network
+        nn_model = ObesityNN.Model(
+            input_size=args.n_features,
+            output_size=args.n_classes,
+            fc1_out=args.fc1_out,
+            fc2_out=args.fc2_out,
+            fc3_out=args.fc3_out,
+            dropout=args.dropout
         )
-        
-        print("Training stacking ensemble...")
-        stacking_model.fit(X_train_stack, y_train)
-        model = stacking_model
-        # Override inference data with the numeric versions.
-        X_val = X_val_stack
-        X_test = X_test_stack
+        nn_loss, nn_val_acc = train_model(args, nn_model, train_loader, val_loader, test_loader, return_loss=True)
+
+        # Logistic Regression (using SGDClassifier for partial_fit)
+        from sklearn.linear_model import SGDClassifier
+        import numpy as np
+        logreg_model = SGDClassifier(loss='log_loss', max_iter=1, warm_start=True)
+        logreg_loss, logreg_val_acc = sklearn_loss_curve(logreg_model, X_train, y_train, X_val, y_val, args.epochs, args.batch_size)
+
+        # SVM (using SGDClassifier with hinge loss)
+        svm_model = SGDClassifier(loss='hinge', max_iter=1, warm_start=True)
+        svm_loss, svm_val_acc = sklearn_hinge_loss_curve(svm_model, X_train, y_train, X_val, y_val, args.epochs, args.batch_size)
+
+        # XGBoost (track log loss after each boosting round)
+        xgb_model = XGBClassifier(
+            n_estimators=args.epochs,  # Use epochs as n_estimators for fair comparison
+            max_depth=args.max_depth,
+            learning_rate=args.alpha,
+            reg_lambda=args.lambda_,
+            objective='multi:softprob',
+            num_class=args.n_classes,
+            random_state=RANDOM_STATE,
+            eval_metric=['mlogloss', 'merror'],
+            use_label_encoder=False
+        )
+        eval_set = [(X_train, y_train), (X_val, y_val)]
+        xgb_model.fit(X_train, y_train, eval_set=eval_set, verbose=False)
+        xgb_loss = xgb_model.evals_result()['validation_0']['mlogloss']
+        xgb_val_acc = [100 * (1 - err) for err in xgb_model.evals_result()['validation_1']['merror']]
+
+        # NODE
+        node_model = node.NODEModel(
+            input_size=args.n_features,
+            output_size=args.n_classes,
+            dropout=args.dropout,
+            num_layers=args.num_layers,
+            num_trees=args.num_trees,
+            tree_dim=args.tree_dim
+        )
+        node_loss, node_val_acc = train_model(args, node_model, train_loader, val_loader, test_loader, return_loss=True)
+
+        # Plot loss and validation accuracy
+        epochs = range(1, len(nn_loss)+1)
+        fig, ax1 = plt.subplots()
+
+        color = 'tab:blue'
+        ax1.set_xlabel('Epoch')
+        ax1.set_ylabel('Training Loss', color=color)
+        ax1.plot(epochs, nn_loss, label='NN Loss', color=color)
+        ax1.tick_params(axis='y', labelcolor=color)
+
+        ax2 = ax1.twinx()
+        color = 'tab:orange'
+        ax2.set_ylabel('Validation Accuracy (%)', color=color)
+        ax2.plot(epochs, nn_val_acc, label='NN Val Acc', color=color)
+        ax2.tick_params(axis='y', labelcolor=color)
+
+        fig.tight_layout()
+        plt.title('Neural Network Loss and Validation Accuracy')
+        plt.savefig('nn_loss_val_acc.png')
+        # plt.show()
+
+        epochs = range(1, args.epochs+1)
+        plt.figure()
+        plt.plot(epochs, nn_loss, label='NeuralNetwork')
+        if len(logreg_loss) == len(epochs):
+            plt.plot(epochs, logreg_loss, label='LogisticRegression')
+        else:
+            print("Warning: logreg_loss is empty or mismatched length, skipping plot.")
+        plt.plot(epochs, svm_loss, label='SVM (hinge loss)')
+        plt.plot(epochs, xgb_loss, label='XGBoost')
+        plt.plot(epochs, node_loss, label='NODE')
+        plt.plot(epochs, stacking_losses, label='Stacking')
+        plt.xlabel('Epoch')
+        plt.ylabel('Training Loss')
+        plt.title('Loss Curve Comparison')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig('loss_curves.png')
+
+        plt.figure()
+        plt.plot(epochs, nn_val_acc, label='NeuralNetwork')
+        plt.plot(epochs, logreg_val_acc, label='LogisticRegression')
+        plt.plot(epochs, svm_val_acc, label='SVM (hinge loss)')
+        plt.plot(epochs, xgb_val_acc, label='XGBoost')
+        plt.plot(epochs, node_val_acc, label='NODE')
+        plt.plot(epochs, stacking_val_accs, label='Stacking')
+        plt.xlabel('Epoch')
+        plt.ylabel('Validation Accuracy (%)')
+        plt.title('Validation Accuracy Curve Comparison')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig('val_acc_curves.png')
+        print(len(nn_loss), len(logreg_loss), len(svm_loss), len(xgb_loss), len(node_loss), len(stacking_losses))
+        exit(0)
 
     else:
         raise Exception('Model is not defined')
 
     if args.model not in ['NeuralNetwork', 'FeatureImportance']:
-        # Inference for models that implement predict()
         yhat_val = model.predict(X_val)
         precision_val = precision_score(y_true=y_val, y_pred=yhat_val, average='weighted')
         recall_val = recall_score(y_true=y_val, y_pred=yhat_val, average='weighted')
         f1_val = f1_score(y_true=y_val, y_pred=yhat_val, average='weighted')
         accuracy_val = accuracy_score(y_true=y_val, y_pred=yhat_val)
         print(f'Validation Set Precision: {precision_val*100:.2f}%, Recall: {recall_val*100:.2f}%, F1: {f1_val*100:.2f}%, Accuracy: {accuracy_val*100:.2f}%')
-
+        
+        # For the NODE model, print sample predictions with their actual values.
+        if args.model == 'NODE':
+            num_samples = min(10, len(y_val))
+            print("Sample predictions on validation set:")
+            for idx in range(num_samples):
+                print(f"Sample {idx}: Actual: {y_val[idx]}, Predicted: {yhat_val[idx]}")
+        
         yhat_test = model.predict(X_test)
         precision_test = precision_score(y_true=y_test, y_pred=yhat_test, average='weighted')
         recall_test = recall_score(y_true=y_test, y_pred=yhat_test, average='weighted')
         f1_test = f1_score(y_true=y_test, y_pred=yhat_test, average='weighted')
         accuracy_test = accuracy_score(y_true=y_test, y_pred=yhat_test)
         print(f'Test Set Precision: {precision_test*100:.2f}%, Recall: {recall_test*100:.2f}%, F1: {f1_test*100:.2f}%, Accuracy: {accuracy_test*100:.2f}%')
-    

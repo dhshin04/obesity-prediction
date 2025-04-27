@@ -382,6 +382,104 @@ def train_fusion_model(args, X_train, X_val, X_test, y_train, y_val, y_test):
     print(f'Test Set Precision: {test_precision*100:.2f}%, Recall: {test_recall*100:.2f}%, '
         f'F1: {test_f1*100:.2f}%, Accuracy: {test_accuracy*100:.2f}%')
 
+    # Fusion Model (simulate epoch-wise training)
+    fusion_losses = []
+    fusion_val_accs = []
+    n = X_train.shape[0]
+    step = n // args.epochs
+
+    for epoch in range(1, args.epochs + 1):
+        end = min(epoch * step, n)
+        if end == 0:
+            continue
+        # Prepare fusion data for this epoch
+        X_train_epoch = X_train[:end]
+        y_train_epoch = y_train[:end]
+        # Train base models
+        base_models = {
+            'XGBoost': XGBClassifier(
+                n_estimators=args.n_trees,
+                max_depth=args.max_depth,
+                learning_rate=args.alpha,
+                reg_lambda=args.lambda_,
+                objective='multi:softmax',
+                num_class=args.n_classes,
+                random_state=RANDOM_STATE
+            ),
+            'LogisticRegression': LogisticRegression(
+                C=args.lambda_,
+                max_iter=args.max_iter,
+                random_state=RANDOM_STATE
+            ),
+            'SVM': SVC(
+                C=args.lambda_,
+                probability=True,
+                random_state=RANDOM_STATE
+            )
+        }
+        for name, model in base_models.items():
+            model.fit(X_train_epoch, y_train_epoch)
+        # Train NN
+        nn_model = ObesityNN.Model(
+            input_size=args.n_features,
+            output_size=args.n_classes,
+            fc1_out=args.fc1_out,
+            fc2_out=args.fc2_out,
+            fc3_out=args.fc3_out,
+            dropout=args.dropout
+        )
+        nn_model.to(DEVICE)
+        # Only train for a few epochs for speed
+        train_loader_epoch = DataLoader(
+            TensorDataset(torch.FloatTensor(X_train_epoch), torch.LongTensor(y_train_epoch)),
+            batch_size=args.batch_size, shuffle=True
+        )
+        val_loader_epoch = DataLoader(
+            TensorDataset(torch.FloatTensor(X_val), torch.LongTensor(y_val)),
+            batch_size=args.batch_size, shuffle=False
+        )
+        train_model(args, nn_model, train_loader_epoch, val_loader_epoch, val_loader_epoch, return_loss=False)
+
+        # Prepare fused features
+        def get_nn_preds(model, X):
+            model.eval()
+            X_tensor = torch.FloatTensor(X).to(DEVICE)
+            with torch.no_grad():
+                outputs = model(X_tensor)
+                _, predicted = torch.max(outputs.data, 1)
+            return predicted.cpu().numpy()
+
+        def add_preds(X, models, nn_model=None):
+            X_new = pd.DataFrame(X)
+            for name, model in models.items():
+                preds = model.predict(X)
+                X_new[f'pred_{name}'] = preds
+            if nn_model:
+                nn_preds = get_nn_preds(nn_model, X)
+                X_new['pred_NeuralNetwork'] = nn_preds
+            return X_new
+
+        X_train_fusion = add_preds(X_train_epoch, base_models, nn_model)
+        X_val_fusion = add_preds(X_val, base_models, nn_model)
+
+        # Train fusion model (Logistic Regression)
+        fusion_model = LogisticRegression(
+            multi_class='multinomial',
+            solver='lbfgs'
+        )
+        fusion_model.fit(X_train_fusion.values, y_train_epoch)
+        y_pred = fusion_model.predict(X_val_fusion.values)
+        val_acc = (y_pred == y_val).mean() * 100
+        fusion_val_accs.append(val_acc)
+        try:
+            y_pred_proba = fusion_model.predict_proba(X_val_fusion.values)
+            loss = log_loss(y_val, y_pred_proba, labels=np.unique(y_train))
+        except Exception:
+            loss = float('nan')
+        fusion_losses.append(loss)
+
+    return X_train, X_val, X_test, fusion_losses, fusion_val_accs
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
@@ -454,7 +552,9 @@ if __name__ == '__main__':
         print(f"y_train: {y_train.shape}, y_val: {y_val.shape}, y_test: {y_test.shape}")
         print(f"Unique classes in y_train: {np.unique(y_train, return_counts=True)}")
         
-        train_fusion_model(args, X_train, X_val, X_test, y_train, y_val, y_test)
+        _, _, _, fusion_losses, fusion_val_accs = train_fusion_model(
+            args, X_train, X_val, X_test, y_train, y_val, y_test
+        )
     elif args.model == 'XGBoost':
         model = XGBClassifier(
             n_estimators = args.n_trees, 
@@ -599,6 +699,8 @@ if __name__ == '__main__':
         )
         node_loss, node_val_acc = train_model(args, node_model, train_loader, val_loader, test_loader, return_loss=True)
 
+        _, _, _, fusion_losses, fusion_val_accs = train_fusion_model(args, X_train, X_val, X_test, y_train, y_val, y_test)
+
         # Plot loss and validation accuracy
         epochs = range(1, len(nn_loss)+1)
         fig, ax1 = plt.subplots()
@@ -631,6 +733,7 @@ if __name__ == '__main__':
         plt.plot(epochs, xgb_loss, label='XGBoost')
         plt.plot(epochs, node_loss, label='NODE')
         plt.plot(epochs, stacking_losses, label='Stacking')
+        plt.plot(epochs, fusion_losses, label='Fusion')
         plt.xlabel('Epoch')
         plt.ylabel('Training Loss')
         plt.title('Loss Curve Comparison')
@@ -646,6 +749,7 @@ if __name__ == '__main__':
         plt.plot(epochs, xgb_val_acc, label='XGBoost')
         plt.plot(epochs, node_val_acc, label='NODE')
         plt.plot(epochs, stacking_val_accs, label='Stacking')
+        plt.plot(epochs, fusion_val_accs, label='Fusion')
         plt.xlabel('Epoch')
         plt.ylabel('Validation Accuracy (%)')
         plt.title('Validation Accuracy Curve Comparison')
